@@ -36,10 +36,10 @@ Lara Croft from Tomb Raider: Angel of Darkness ported in Tomb Raider: Anniversar
 ![image](https://cdn.discordapp.com/attachments/922284054353674273/1004216479950065724/Screenshot_3361.png)
 ![image](https://cdn.discordapp.com/attachments/922284054353674273/1004216455094620290/Tomb_Raider_Anniversary_Screenshot_2022.08.03_-_04.36.26.39.png)
 
-Lara Croft TR4 outfit custom model by HenrysArts ported in Tomb Raider: Anniversary
+Lara Croft TR4 outfit custom model ported in Tomb Raider: Anniversary by HenrysArts
 
 ![image](https://cdn.discordapp.com/attachments/916875187977326612/1002894311832158298/unknown.png)
 
-Ada Wong by EvilLord ported in Tomb Raider: Legend
+Ada Wong ported in Tomb Raider: Legend by EvilLord
 
 ![image](https://cdn.discordapp.com/attachments/916875187977326612/1002616571396628662/unknown.png)
