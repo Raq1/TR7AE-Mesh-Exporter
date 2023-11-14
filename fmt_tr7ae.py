@@ -1,22 +1,11 @@
 # ================================================================================
 # Tomb Raider Legend/Anniversary (PC, PS3)
-# v1.3 (26 July 2022)
+# v1.97 (11 March 2023)
 # Model importer by Dave
 # Model exporter by Raq
+# Texture exported by TheIndra
 # BGObjects importer by TheIndra
-# Thanks to Gh0stblade, akderebur, Joschka, AesirHod, alphaZomega for providing valuable information for this script
-
-# CHANGELOG:
-# v1.0 - Initial release
-
-# v1.1 - Optimized the code to write VirtSegments. Now they are being written 100% correctly.
-# v1.1 - Fixed an issue where a random vertex would get corrupted UVs. That happened because I wasn't correctly writing envMappedVertices and EyeRefEnvMappedVertices.
-
-# v1.2 - Added a prompt to export over Lara's original 5_0.gnc file to get HInfo (signals trigger and weapon attachments).
-# v1.2 - Added code to write tpageid and drawgroup from the mesh names.
-# v1.2 - Added code to add export parameters to remove weapon attachments.
-
-# v1.3 - Fixed an issue where exporting with -noshotgun would also remove the guns attachment.
+# Thanks to Gh0stblade, akderebur, Joschka, TheIndra, AesirHod, alphaZomega for providing valuable information for this script
 # ================================================================================
 
 
@@ -25,11 +14,14 @@ import math
 import re
 import copy
 
+SECTION_TEXTURE = 5
+
 def registerNoesisTypes():
 
     def addOptions(handle):
         noesis.addOption(handle, "-noguns", "Remove the holstered guns attachment", 0)
         noesis.addOption(handle, "-noshotgun", "Remove the holstered shotgun attachment", 0)
+        noesis.addOption(handle, "-nogear", "Remove all the gear attachments (grapple hook excluded)", 0)
         return handle
 
     handle = noesis.register("TR7AE BGObjects (PC)", ".drm")
@@ -40,7 +32,7 @@ def registerNoesisTypes():
     noesis.setHandlerTypeCheck(handle, bcCheckType)
     noesis.setHandlerLoadModel(handle, bcLoadModel)
     
-    handle = noesis.register("TR7AE Mesh(PC)",".gnc")
+    handle = noesis.register("TR7AE Mesh (PC)",".tr7aemesh")
     noesis.setHandlerTypeCheck(handle, bdCheckType)
     noesis.setHandlerLoadModel(handle, bdLoadModel)
     noesis.setHandlerWriteModel(handle, meshWriteModel)
@@ -104,9 +96,9 @@ def bcLoadModel(data, mdlList):
         if entry_type == 0:
             header2 = data_start + (item_entries * 8)
             bs.seek(header2)
-            gnc_id = bs.readUInt()
+            tr7aemesh_id = bs.readUInt()
 
-            if gnc_id == 0x04c20453:						# mesh data found
+            if tr7aemesh_id == 0x04c20453:						# mesh data found
                 DrawModel(bs, header2, tex_list, mat_list, mdlList)
                 flag = 1
 #				break							# enable this line to just display first model found
@@ -191,22 +183,76 @@ def DrawModel(bs, header2, tex_list, mat_list, mdlList):
 # Read skeleton data
 
     bones = []
+    bonesM = []
 
     for a in range(bone_count1):
         bs.seek(bone_data + (a * 0x40) + 0x20)
 
         pos = NoeVec3.fromBytes(bs.readBytes(12))
         bs.seek(12, NOESEEK_REL)
-        parent_id = bs.readUInt()
+        boneParent = bs.readUInt()
+
+        # Read HInfo data
+
         HInfo = bs.readUInt()
+        if HInfo != 0:
+
+            bs.seek(HInfo + header2)
+            numHSpheres = bs.readInt()
+            hsphereList = bs.readUInt()
+            numHBoxes = bs.readInt()
+            hboxList = bs.readUInt()
+            numHMarkers = bs.readInt()
+            hmarkerList = bs.readUInt()
+            numHCapsules = bs.readInt()
+            hcapsuleList = bs.readUInt()
+
+            print("\nHInfo detected for bone%03i"%a + "\nHSpheres = " + str(numHSpheres) + "\nHBoxes = " + str(numHBoxes) + "\nHMarkers = " + str(numHMarkers) + "\nHCapsules = " + str(numHCapsules))
+
+            if numHSpheres > 0:
+                bs.seek (hsphereList + header2)
+                flags = bs.readShort()
+                id = bs.readByte()
+                rank = bs.readByte()
+                radius = bs.readShort()
+                X = bs.readShort()
+                Y = bs.readShort()
+                Z = bs.readShort()
+                radiusSquares = bs.readUInt()
+                mass = bs.readUInt()
+                buoyancyFactor = bs.readByte()
+                explosionFactor = bs.readByte()
+                iHitMaterialType = bs.readByte()
+                pad = bs.readByte()
+                damage = bs.readShort()
+
+            if numHMarkers > 0:
+                bs.seek (hmarkerList + header2)
+                for b in range(numHMarkers):
+                    bone = bs.readInt()
+                    index = bs.readInt()
+                    posMarker = NoeVec3.fromBytes(bs.readBytes(12))
+                    rx = bs.readFloat()
+                    ry = bs.readFloat()
+                    rz = bs.readFloat()
+                    matrixMarker = NoeQuat([0, 0, 0, 1]).toMat43()   
+                    matrixMarker[3] = posMarker
+                    if not a:
+                        matrixMarker *= NoeAngles([90,0,0]).toMat43()
+
+                        bonesM.append(NoeBone(a, "Marker%03i"%a, matrixMarker, None, bone))
+
+                    print("posMarker being " + str(posMarker))
+
         matrix = NoeQuat([0, 0, 0, 1]).toMat43()
         matrix[3] = pos
         if not a:
             matrix *= NoeAngles([90,0,0]).toMat43()
 
-        bones.append(NoeBone(a, "bone%03i"%a, matrix, None, parent_id))
+        bones.append(NoeBone(a, "bone%03i"%a, matrix, None, boneParent))
 
     bones = rapi.multiplyBones(bones)
+    bonesM = rapi.multiplyBones(bones)
 
 
 # Read vertex data
@@ -294,11 +340,11 @@ def DrawModel(bs, header2, tex_list, mat_list, mdlList):
         scrollOffset = bs.readFloat()
         
         bs.seek(texidoffset)
-        texture_id = bs.readUByte()
-        alpha = bs.readUByte()
-        matprop = bs.readUShort()
-        sortPush = bs.readFloat()
-        scrollOffset = bs.readFloat()
+        texture_id = bs.readBits(13)
+        blendValue = bs.readBits(4)
+        unk1 = bs.readBits(4)
+        SingleSided = bs.readBits(1)
+        unk2 = bs.readBits(10)
         
         bs.seek(texidoffset)
         tpageid = bs.readInt()
@@ -309,7 +355,7 @@ def DrawModel(bs, header2, tex_list, mat_list, mdlList):
         faces = bs.readBytes(face_count * 2)
         
         rapi.rpgSetMaterial("Material_" + str(tex_id))
-        rapi.rpgSetName("Mesh_" + str(mesh_num) + "_tpageid_" + str(tpageid) + "_dg_" + str(drawgroup))
+        rapi.rpgSetName("Mesh_" + str(mesh_num) + "_TexID_" + str(texture_id) + "_Blend_" + str(blendValue) + "_SingleSided_" + str(SingleSided) + "_dg_" + str(drawgroup))
         rapi.rpgCommitTriangles(faces, noesis.RPGEODATA_USHORT, face_count, noesis.RPGEO_TRIANGLE)
         mesh_num += 1
 
@@ -355,118 +401,98 @@ def bdLoadModel(data, mdlList):
 # Read skeleton data
 
     bones = []
+    secondBoneList = []
+    hmarker_num = 0
+    boneHMarker = 0
+    hsphere_num = 0
 
     for a in range(bone_count1):
         bs.seek(bone_data + (a * 0x40) + 0x20)
 
         pos = NoeVec3.fromBytes(bs.readBytes(12))
-        bs.seek(12, NOESEEK_REL)
-        parent_id = bs.readUInt()
+        bs.seek(4, NOESEEK_REL)
+        flags = bs.readUInt()
+        bs.seek(4, NOESEEK_REL)
+        boneParent = bs.readUInt()
+
+        # Read HInfo data
+
         HInfo = bs.readUInt()
+        if HInfo != 0:
+
+            bs.seek(HInfo + header2)
+            numHSpheres = bs.readInt()
+            hsphereList = bs.readUInt()
+            numHBoxes = bs.readInt()
+            hboxList = bs.readUInt()
+            numHMarkers = bs.readInt()
+            hmarkerList = bs.readUInt()
+            numHCapsules = bs.readInt()
+            hcapsuleList = bs.readUInt()
+
+            print("\nHInfo detected for bone%03i"%a + "\nHSpheres = " + str(numHSpheres) + "\nHBoxes = " + str(numHBoxes) + "\nHMarkers = " + str(numHMarkers) + "\nHCapsules = " + str(numHCapsules))
+
+            if numHSpheres > 0:
+                bs.seek (hsphereList + header2)
+                for b in range(numHSpheres):
+                    flags = bs.readShort()
+                    id = bs.readByte()
+                    rank = bs.readByte()
+                    radius = bs.readShort()
+                    X = bs.readShort()
+                    Y = bs.readShort()
+                    Z = bs.readShort()
+                    radiusSquares = bs.readUInt()
+                    mass = bs.readUInt()
+                    buoyancyFactor = bs.readByte()
+                    explosionFactor = bs.readByte()
+                    iHitMaterialType = bs.readByte()
+                    pad = bs.readByte()
+                    damage = bs.readShort()
+
+                    print("HSphere {} ".format(hsphere_num) + str((X, Y, Z)))
+
+                    hsphere_num += 1
+
+            if numHMarkers > 0:
+                bs.seek (hmarkerList + header2)
+                for c in range(numHMarkers):
+                    bone = bs.readInt()
+                    index = bs.readInt()
+                    posMarker = NoeVec3.fromBytes(bs.readBytes(12))
+                    rx = bs.readFloat()
+                    ry = bs.readFloat()
+                    rz = bs.readFloat()
+                    matrixMarker = NoeQuat([0, 0, 0, 1]).toMat43()   
+                    matrixMarker[3] = posMarker
+                    if not c:
+                        matrixMarker *= NoeAngles([90,0,0]).toMat43()
+
+                    secondBoneList.append(NoeBone(c, "HMarker_{}_bone_{}_index_{}".format(hmarker_num, boneHMarker, index), matrixMarker, None, bone))
+
+                    print("HMarker {} ".format(hmarker_num) + str(posMarker))
+                    # bones.extend(secondBoneList)
+                    # for i, bone in enumerate(bones):
+                      # bone.index = i
+
+                    hmarker_num += 1
+        boneHMarker += 1
+
         matrix = NoeQuat([0, 0, 0, 1]).toMat43()
         matrix[3] = pos
         if not a:
             matrix *= NoeAngles([90,0,0]).toMat43()
 
-        bones.append(NoeBone(a, "bone%03i"%a, matrix, None, parent_id))
+        bones.append(NoeBone(a, "bone%03i"%a, matrix, None, boneParent))
 
     bones = rapi.multiplyBones(bones)
-
-# Read HInfo
-
-    if HInfo > 0:
-        bs.seek(HInfo + header2)
-        numHSpheres = bs.readInt()
-        hsphereList = bs.readUInt()
-        numHBoxes = bs.readInt()
-        hboxList = bs.readUInt()
-        numHMarkers = bs.readInt()
-        hmarkerList = bs.readUInt()
-        numHCapsules = bs.readInt()
-        hcapsuleList = bs.readUInt()
-
-        if numHSpheres > 0:
-            bs.seek(hsphereList + header2)
-
-            flag = bs.readShort()
-            id = bs.readByte()
-            rank = bs.readByte()
-            radius = bs.readShort()
-            x = bs.readShort()
-            y = bs.readShort()
-            z = bs.readShort()
-            radiusSquared = bs.readUInt()
-            mass = bs.readUShort()
-            buoyancyFactor = bs.readByte()
-            explosionFactor = bs.readByte()
-            iHitMaterialType = bs.readByte()
-            pad = bs.readByte()
-            damage = bs.readShort()
-
-        for a in range(numHMarkers):
-            bs.seek(hmarkerList + header2)
-
-            bone = bs.readInt()
-            index = bs.readInt()
-            pos = NoeVec3.fromBytes(bs.readBytes(12))
-            rx = bs.readFloat()
-            ry = bs.readFloat()
-            rz = bs.readFloat()
-
-            matrix = NoeQuat([0, 0, 0, 1]).toMat43()
-            matrix[3] = pos
-            if not a:
-                matrix *= NoeAngles([90,0,0]).toMat43()
-
-            bones.append(NoeBone(a, "HMarker%03i"%a, matrix, None, bone))
-
-        if numHBoxes > 0:
-            bs.seek(hboxList + header2)
-
-            widthx = bs.readFloat()
-            widthy = bs.readFloat()
-            widthz = bs.readFloat()
-            widthw = bs.readFloat()
-            posx = bs.readFloat()
-            posy = bs.readFloat()
-            posz = bs.readFloat()
-            posw = bs.readFloat()
-            quat = bs.readFloat()
-            flags = bs.readShort()
-            id = bs.readByte()
-            rank = bs.readByte()
-            mass = bs.readUShort()
-            buoyancyFactor = bs.readByte()
-            explosionFactor = bs.readByte()
-            iHitMaterialType = bs.readByte()
-            pad = bs.readByte()
-            damage = bs.readShort()
-
-        if numHCapsules > 0:
-            bs.seek(hcapsuleList + header2)
-
-            x = bs.readShort()
-            y = bs.readShort()
-            z = bs.readShort()
-            quat = bs.readFloat()
-            flags = bs.readShort()
-            id = bs.readByte()
-            rank = bs.readByte()
-            radius = bs.readUShort()
-            length = bs.readUShort()
-            mass = bs.readUShort()
-            buoyancyFactor = bs.readByte()
-            explosionFactor = bs.readByte()
-            iHitMaterialType = bs.readByte()
-            pad = bs.readByte()
-            damage = bs.readShort()
 
 
 # Read vertex data
 
     bs.seek(header2 + 0x20)
-    vert_count = bs.readUInt()
-    vert_start = bs.readUInt() + header2
+    vert_count = bs.readInt()
+    vert_start = bs.readInt() + header2
 
     bs.seek(header2 + 0x58)
     face_info = bs.readUInt() + header2
@@ -521,6 +547,7 @@ def bdLoadModel(data, mdlList):
             struct.pack_into("<HH", bone_idx, v * 4, bone_id, 0)
             struct.pack_into("<ff", weights, v * 8, 1, 0)
 
+
 # Transform vertices to bone position without using rpgSkinPreconstructedVertsToBones
 
         vertpos = bones[bone_id].getMatrix().transformPoint([vx, vy, vz])
@@ -562,11 +589,11 @@ def bdLoadModel(data, mdlList):
         scrollOffset = bs.readFloat()
         
         bs.seek(texidoffset)
-        texture_id = bs.readUByte()
-        alpha = bs.readUByte()
-        matprop = bs.readUShort()
-        sortPush = bs.readFloat()
-        scrollOffset = bs.readFloat()
+        texture_id = bs.readBits(13)
+        blendValue = bs.readBits(4)
+        unk1 = bs.readBits(4)
+        SingleSided = bs.readBits(1)
+        unk2 = bs.readBits(10)
         
         bs.seek(texidoffset)
         tpageid = bs.readInt()
@@ -576,10 +603,25 @@ def bdLoadModel(data, mdlList):
         current_mesh = bs.readUInt() + header2					# next face section
         faces = bs.readBytes(face_count * 2)
         
-        rapi.rpgSetMaterial("Material_" + str(tex_id))
-        rapi.rpgSetName("Mesh_" + str(mesh_num) + "_tpageid_" + str(tpageid) + "_dg_" + str(drawgroup))
+        rapi.rpgSetMaterial("Material_" + str(tpageid))
+        rapi.rpgSetName("Mesh_" + str(mesh_num) + "_TexID_" + str(texture_id) + "_Blend_" + str(blendValue) + "_SingleSided_" + str(SingleSided) + "_dg_" + str(drawgroup))
         rapi.rpgCommitTriangles(faces, noesis.RPGEODATA_USHORT, face_count, noesis.RPGEO_TRIANGLE)
         mesh_num += 1
+
+# Read MFace data
+
+    bs.seek(header2 + 0x30)
+    numFaces = bs.readInt()
+    faceList = bs.readInt() + header2
+    for f in range(numFaces):
+        if faceList > 0:
+            bs.seek(faceList)
+            f0 = bs.readShort()
+            f1 = bs.readShort()
+            f2 = bs.readShort()
+            sameVertBits1 = bs.readBits(5)
+            sameVertBits2 = bs.readBits(5)
+            sameVertBits3 = bs.readBits(5)
 
     try:
         mdl = rapi.rpgConstructModel()
@@ -637,107 +679,103 @@ def pcdLoadDDS(data, texList):
     return 1
 
 def pcdWriteRGBA(data, width, height, bs):
-    bPcdAsSource = False
-    
-    def getExportName(fileName):		
-        if fileName == None:
-            newPcdName = rapi.getInputName()
-        else:
-            newPcdName = fileName
-        newPcdName =  newPcdName.lower().replace(".pcdout","").replace(".pcd","").replace(".dds","").replace("out.",".").replace(".jpg","").replace(".png","").replace(".tga","").replace(".gif","")
-        newPcdName = noesis.userPrompt(noesis.NOEUSERVAL_FILEPATH, "Export over pcd", "Choose a pcd file to export over", newPcdName + ".pcd", None)
-        if newPcdName == None:
-            print("Aborting...")
-            return
-        return newPcdName
-        
-    fileName = None
-    newPcdName = getExportName(fileName)
-    if newPcdName == None:
-        return 0
-    while not (rapi.checkFileExists(newPcdName)):
-        print ("File not found")
-        newPcdName = getExportName(fileName)	
-        fileName = newPcdName
-        if newPcdName == None:
-            return 0		
-            
-    newPCD = rapi.loadIntoByteArray(newPcdName)
+    filename = rapi.getOutputName()
     oldDDS = rapi.loadIntoByteArray(rapi.getInputName())
-    f = NoeBitStream(newPCD)
     og = NoeBitStream(oldDDS)
-    
-    f.seek(0x18, NOESEEK_ABS)
-    
-    magic = f.readUInt()
+    fsize = os.path.getsize(rapi.getInputName()) - 128
+
+    # Check if input file is a DDS file
     ddsMagic = og.readUInt()
-    if magic != 960774992:
-        print ("Selected file is not a pcd file!\nAborting...")
-        return 0
-    if ddsMagic == 542327876: #DDS
-        headerSize = og.readUInt() + 4
-        og.seek(84, NOESEEK_ABS)
-        ddsType = og.readUInt()
-    else:
-        if ddsMagic == 960774992:
-            bPcdAsSource = True
-            headerSize = 48
-        else:
-            print ("Input file is not a supported format or a pcd file\nEncoding...")
-    
-    ddsFmt = -1
-    imgType = f.readUInt()
-    if imgType == 827611204:
-        ddsFmt = noesis.NOE_ENCODEDXT_BC1
-    elif imgType == 894720068:
-        ddsFmt = noesis.NOE_ENCODEDXT_BC3
-        print ("Warning: Encoding as r8g8b8a8 may not work")
-    else:
-        print ("Unknown pcd type:", ddsFmt)
-        return 0
-    print (imgType)
-    print ("ddsFmt:", ddsFmt)
-    print ("noesis.NOE_ENCODEDXT_BC1:", noesis.NOE_ENCODEDXT_BC1)
-    #copy header
-    f.seek(0, NOESEEK_ABS)
-    bs.writeBytes(f.readBytes(48))
-    
-    #write image data	
-    numMips = 0
-    mipWidth = width
-    mipHeight = height
-    
-    print ("Writing Image Data at:", bs.tell())
+    if ddsMagic != 542327876:
+            print ("\nInput file is not a DDS file!\nAborting...\n")
+            return 0
+
+    # extract id from filename
+    headerSize = 48
+    split = re.findall("[0-9]+_([0-9a-f]+)", filename)[-1]
+    id = int(split, 16)
+
+    print("ID detected from filename as " + str(id))
+
+    # set format values based on options
+    formatMagic = None
+    format = None
+
+    og.seek(84, NOESEEK_ABS)
+    ddsType = og.readUInt()
+    if ddsType == 827611204: #DXT1
+        formatMagic = "DXT1"
+        format = noesis.NOE_ENCODEDXT_BC1
+    elif ddsType == 894720068: #DXT5
+        formatMagic = "DXT5"
+        format = noesis.NOE_ENCODEDXT_BC3
+
+    # write section header
+    bs.writeString("SECT", False)	# cdcEngineTools section magic
+    bs.writeUInt(0)                 # size - will be written later
+    bs.writeByte(SECTION_TEXTURE)   # section type
+    bs.writeByte(0)                 # padding
+    bs.writeUShort(0)               # version id
+    bs.writeUInt(0)                 # packedData
+    bs.writeUInt(id)                # section id
+    bs.writeUInt(0xFFFFFFFF)        # specialisation mask
+
+    # write texture header
+    bs.writeString("PCD9", False)       # magic number
+    bs.writeString(formatMagic, False)  # format
+    bs.writeUInt(0)                     # image size - will be written later
+    bs.writeUInt(0)                     # palette size
+    bs.writeUShort(width)               # width
+    bs.writeUShort(height)              # height
+    bs.writeUByte(0)                    # depth
+    bs.writeUByte(0)                    # number of mipmaps
+    bs.writeUShort(3)                   # flags - always 3 on any DXT1/DXT5 texture. 0 in the case of PCD file with no DXT format specified. Maybe will try to deal with it someday, maybe not.
+
+    print("Image is {}x{}".format(width, height))
+
+    # write image data
+    dxtData = rapi.imageEncodeDXT(data, 4, width, height, format)
+    og.seek(128, NOESEEK_ABS)
+    bs.writeBytes(og.readBytes(fsize))
+
+    # write mipmaps, mostly copied from old exporter
+    mipWidth = int(width >> 1) 
+    mipHeight = int(height >> 1)
+    numMipmaps = 0
+
     while mipWidth >= 1 and mipHeight >= 1:
+        print("Mipmap {}x{}".format(mipWidth, mipHeight))
+
+        # resample and encode to format
         mipData = rapi.imageResample(data, width, height, mipWidth, mipHeight)
-        if ddsFmt == -1:
-            dxtData = rapi.imageEncodeRaw(mipData, mipWidth, mipHeight, "r8g8b8a8")
-        else:
-            dxtData = rapi.imageEncodeDXT(mipData, 4, mipWidth, mipHeight, ddsFmt)
+        dxtData = rapi.imageEncodeDXT(mipData, 4, mipWidth, mipHeight, format)
+
         bs.writeBytes(dxtData)
-        #if numMips == 0: imgSize = bs.tell() - 284
-        numMips += 1
-        print ("Mip", numMips, ": ", mipWidth, "x", mipHeight)
-        
-        if mipWidth == 1 and mipHeight == 1:
-            break
-        if mipWidth > 1:
-            mipWidth = int(mipWidth / 2)
-        if mipHeight > 1:
-            mipHeight = int(mipHeight / 2)
-            
-    print ("Num Mips:", numMips)
-    imgSize = bs.tell() - 48
-    #adjust header
-    bs.seek(32, NOESEEK_ABS)
-    bs.writeUInt(imgSize)
-    bs.seek(40, NOESEEK_ABS)
-    bs.writeUShort(width)
-    bs.writeUShort(height)
+
+        numMipmaps += 1
+
+        # next mipmap size
+        mipWidth = int(mipWidth >> 1)
+        mipHeight = int(mipHeight >> 1)
+
+    size = bs.tell()
+
+    # correct section size
     bs.seek(4, NOESEEK_ABS)
-    bs.writeUInt(imgSize + 24)
+    bs.writeUInt(size - 24)
+
+    # correct image size
+    bs.seek(32, NOESEEK_ABS)
+    bs.writeUInt(size - 48)
+
+    # correct number of mipmaps, could be calculated above but meh
+    bs.seek(45, NOESEEK_ABS)
+    bs.writeUByte(numMipmaps)
+    
+    print("Written {} bytes to file".format(size))
 
     return 1
+    
     
 def ps3pcdLoadDDS(data, texList):
     bs = NoeBitStream(data, 1)
@@ -1008,7 +1046,7 @@ def readBGObjectList(bs, drm, section, numBGObjects, mdlList):
         # follow texture strip
         readTextureStrip(bs, drm, strip)
         
-        # return to orginal position and skip to end of this BGobject
+        # return to original position and skip to end of this BGobject
         bs.seek(oldOffset + 0x2C, NOESEEK_ABS)	
         
         mdl = rapi.rpgConstructModel()
@@ -1210,28 +1248,60 @@ class Pointer:
         self.section = section
         self.offset = offset
 
-#gnc mesh exporter by Raq
+#tr7aemesh mesh exporter by Raq
 #In case you're wondering, no, I'm not good at this. I barely know what I'm doing. This code is a huge mess.
 def meshWriteModel(mdl, bs):
+    filename = rapi.getOutputName()
+
+    # check if model exceeds vertex limit
+
+    numVerts = 0
+
+    for m, mesh in enumerate(mdl.meshes):
+        numVerts += len(mesh.positions)
+
+        if numVerts > 21850:
+            print ("\nERROR: This model exceeds the limit of 21850 vertices")
+            return 0
+
+    # check if model has any vertex exceeding 2 weights
+
+    for m, mesh in enumerate(mdl.meshes):
+        f = []
+        for vertIdx,skinVert in enumerate(mesh.weights):
+
+            if len(skinVert.indices) > 2:
+                print ("\nERROR: This model contains vertices with more than 2 weights")
+                return 0
+
+    # extract id from filename
+    split = re.split("[\\\\_.]", filename)[-3]
+    id = int(split)
+
+    print("ID detected from filename as " + str(id))
+
     sd = NoeBitStream()
     vt = NoeBitStream()
     fc = NoeBitStream()
-    global doNorms, bDoAutoScale, bNoGuns, bNoShotgun
+    mf = NoeBitStream()
+    global doNorms, bDoAutoScale, bNoGuns, bNoShotgun, bNoGear
     ctx = rapi.rpgCreateContext()
 
     bNoGuns = noesis.optWasInvoked("-noguns")
     bNoShotgun = noesis.optWasInvoked("-noshotgun")
+    bNoGear = noesis.optWasInvoked("-nogear")
 
 
-    print ("			----TR7AE GNC Mesh Export 1.3 by Raq----			\n")
+    print ("			----TR7AE Mesh Export 1.97 by Raq----			\n")
     print ("Export Parameters:")
     print (" -noguns  =  Export with the holstered guns removed")
-    print (" -noshotgun  =  Export with the holstered shotgun removed\n")
+    print (" -noshotgun  =  Export with the holstered shotgun removed")
+    print (" -nogear  =  Export with all gear attachments removed\n")
 
     def getExportName():
 		
-        newMeshName = ((re.sub(r'\.mesh\..*', "", rapi.getInputName().lower()).replace(".meshout","")).replace(".fbx","").replace(".gnc","").replace("out.",""))
-        newMeshName = noesis.userPrompt(noesis.NOEUSERVAL_FILEPATH, "Export over gnc", "Choose 5_0.gnc from lara.drm. You cannot export over any other file.", newMeshName + ".gnc", None)
+        newMeshName = ((re.sub(r'\.mesh\..*', "", rapi.getInputName().lower()).replace(".meshout","")).replace(".fbx","").replace(".tr7aemesh","").replace("out.",""))
+        newMeshName = noesis.userPrompt(noesis.NOEUSERVAL_FILEPATH, "Export over tr7aemesh", "Choose 5_0.tr7aemesh from lara.drm. You cannot export over any other file.", newMeshName + ".tr7aemesh", None)
         if newMeshName == None:
             print("Aborting...")
             return
@@ -1264,6 +1334,10 @@ def meshWriteModel(mdl, bs):
         print ("Exporting with removed holstered shotgun attachment")
         bNoShotgun = True
 
+    if noesis.optWasInvoked("-nogear"):
+        print ("Exporting with removed gear attachments (grapple hook excluded)")
+        bNoGear = True
+
     #Write header
     sd.seek(0)
     sd.writeInt(79823955) #version
@@ -1275,9 +1349,10 @@ def meshWriteModel(mdl, bs):
     boneOffset = sd.tell()
     sd.writeInt(0)
     #ModelScale
-    sd.writeFloat(0.1)
-    sd.writeFloat(0.1)
-    sd.writeFloat(0.1)
+    ModelScale = sd.tell()
+    sd.writeFloat(0.005000000)
+    sd.writeFloat(0.005000000)
+    sd.writeFloat(0.005000000)
     sd.writeFloat(1)
     #Vertex Count, write later
     vertexCount = sd.tell()
@@ -1391,10 +1466,6 @@ def meshWriteModel(mdl, bs):
     for m, mesh in enumerate(mdl.meshes):
         f = []
         for vertIdx,skinVert in enumerate(mesh.weights):
-
-            if len(skinVert.indices) > 2:
-                print ("\nERROR: This model contains vertices with more than 2 weights")
-                return 0
 
             #Null all the min/max values, they are probably for bounding boxes used during development and they're useless
             sd.writeFloat(0)
@@ -1697,50 +1768,98 @@ def meshWriteModel(mdl, bs):
     sd.seek(40, NOESEEK_REL)
     offset13 = sd.tell()
     sd.seek(endofHInfo)
-    sd.writeUInt(914765757)
-    sd.writeUInt(1038634627)
+    z.seek(16336, NOESEEK_ABS)
+    sd.writeBytes(z.readBytes(8))
 
     if bNoGuns:
         bNoGuns = True
         sd.seek(endofHInfo)
         sd.seek(-8, NOESEEK_REL)
-        sd.writeFloat(9999999)
+        sd.writeInt(-1)
         sd.seek(-124, NOESEEK_REL)
-        sd.writeFloat(9999999)
+        sd.writeInt(-1)
         sd.seek(132, NOESEEK_REL)
 
     if bNoShotgun:
         bNoShotgun = True
         sd.seek(endofHInfo)
         sd.seek(-784, NOESEEK_REL)
-        sd.writeFloat(9999999)
+        sd.writeInt(-1)
         sd.seek(788, NOESEEK_REL)
+
+    if bNoGear:
+        bNoGear = True
+        sd.seek(endofHInfo)
+
+        #HInfo1
+        sd.seek(-1040, NOESEEK_REL)
+        sd.writeInt(-1)
+        sd.seek(28, NOESEEK_REL)
+        sd.writeInt(-1)
+        sd.seek(28, NOESEEK_REL)
+        sd.writeInt(-1)
+        sd.seek(28, NOESEEK_REL)
+        sd.writeInt(-1)
+        sd.seek(28, NOESEEK_REL)
+        sd.writeInt(-1)
+        sd.seek(28, NOESEEK_REL)
+        sd.writeInt(-1)
+        sd.seek(28, NOESEEK_REL)
+        sd.writeInt(-1)
+        sd.seek(28, NOESEEK_REL)
+        sd.writeInt(-1)
+        sd.seek(28, NOESEEK_REL)
+        sd.writeInt(-1)
+        sd.seek(28, NOESEEK_REL)
+        sd.writeInt(-1)
+
+        #HInfo2
+        sd.seek(60, NOESEEK_REL)
+        sd.writeInt(-1)
+        sd.seek(28, NOESEEK_REL)
+        sd.writeInt(-1)
+        sd.seek(28, NOESEEK_REL)
+        sd.writeInt(-1)
+        sd.seek(28, NOESEEK_REL)
+        sd.writeInt(-1)
+
+        #HInfo3
+        sd.seek(60, NOESEEK_REL)
+        sd.writeInt(-1)
+
+        #HInfo7
+        sd.seek(332, NOESEEK_REL)
+        sd.writeInt(-1)
+
+        #HInfo8
+        sd.seek(60, NOESEEK_REL)
+        sd.writeInt(-1)
+
+        #HInfo10
+        sd.seek(116, NOESEEK_REL)
+        sd.writeInt(-1)
+        sd.seek(12, NOESEEK_REL)
 
 
     #Write vertices
-
     startofVertexBuffer = sd.tell()
     numVerts = 0
     vortsBefore = 0
     for m, mesh in enumerate(mdl.meshes):
         numVerts += len(finalPositions[m])
-
-        if numVerts > 21850:
-            print ("\nERROR: This model exceeds the limit of 21850 vertices")
-            return 0
-
+    
         for v, vertexPos in enumerate(finalPositions[m]):
-
+    
             #Positions
-            vt.writeUShort(int(vertexPos[0] * 10))
-            vt.writeUShort(int(vertexPos[1] * 10))
-            vt.writeUShort(int(vertexPos[2] * 10))
-
+            vt.writeUShort(int(vertexPos[0] / 0.005000000))
+            vt.writeUShort(int(vertexPos[1] / 0.005000000))
+            vt.writeUShort(int(vertexPos[2] / 0.005000000))
+    
             #Normals
             vt.writeByte(int(mesh.normals[v][0] * 127 + 0.5000000001))
             vt.writeByte(int(mesh.normals[v][1] * 127 + 0.5000000001))
             vt.writeByte(int(mesh.normals[v][2] * 127 + 0.5000000001))
-
+    
             #Pad
             vt.writeByte(0)
             
@@ -1753,15 +1872,22 @@ def meshWriteModel(mdl, bs):
             if u & 0xFFFF >= 0x8000: u += 1 << 16
             if v & 0xFFFF >= 0x8000: v += 1 << 16
             vt.writeUInt(v & 0xFFFF << 16 | u >> 16)
-
+    
         vortsBefore += len(mesh.positions)
 
-    #Write faces
+    #Write TextureStripInfo (polygons)
     startofFaces = sd.tell()
     vertsBefore = 0
     offsetlist = []
 
     for m, mesh in enumerate(mdl.meshes):
+
+        print ("Writing " + str(mesh.name))
+
+        if mesh.name.find('.') != -1:
+            print ("Renaming Mesh " + str(mesh.name) + " to " + str(mesh.name.split('.')[0]))
+            mesh.name = mesh.name.split('.')[0]
+
         #Face section header
         startofFaceSection = fc.tell()
         if len(mesh.indices) > 32767:
@@ -1771,22 +1897,32 @@ def meshWriteModel(mdl, bs):
         drawgroup = fc.tell()
         #Get mesh names strings to write tpageid and drawgroup
         splitted = mesh.name.split("_")
-        if len(splitted) != 6:
-            print ("\nERROR: The mesh name of one or more of your meshes is written incorrectly")
+
+        if len(splitted) == 11: #Check this shit because I'm not even sure it works, it's supposed to always remove those weird numbers at the start of the mesh names
+            del splitted[0]
+
+        if len(splitted) != 10:
+            print ("\nERROR: The name of one or more of your meshes is written incorrectly")
             return 0
-        fc.writeShort(int(splitted[5])) #drawgroup
-        tpageid = fc.tell()
-        fc.writeInt(int(splitted[3])) #tpageid
+        fc.writeShort(int(splitted[9])) #drawgroup
+        texture = (int(splitted[3]))
+        blend = (int(splitted[5])) << 13
+        unkn1 = 0 << 17
+        singlesided = (int(splitted[7])) << 21
+        unkn2 = 0 << 22
+        tpageid = texture | blend | unkn1 | singlesided | unkn2
+        fc.writeInt(tpageid)
         fc.writeFloat(0) #sortPush
         fc.writeFloat(0) #scrollOffset
         fc.writeUInt(0) #nextTexture
+
         #Write mesh indices
         for idx in mesh.indices:
             fc.writeUShort(idx + vertsBefore)
+        while ((fc.tell() & 3) != 0):
+            fc.writeByte(0xff) #padding
         vertsBefore += len(mesh.positions)
         nextTexture = fc.tell()
-        #if ((fc.tell() - startofFaceSection) / 6) % 2 != 0: #padding
-            #fc.writeUShort(65535)
             #Get offset of the next face section then go back to nextTexture to write it
         fc.seek(startofFaceSection + 16)
         nextTextureOffset = fc.tell()
@@ -1827,86 +1963,91 @@ def meshWriteModel(mdl, bs):
     sd.seek(startofFaces)
     sd.writeBytes(fc.getBuffer())
 
+    #Write MFace Data
+    sd.seek(startofFaces)
+    sd.writeBytes(mf.getBuffer())
+
     #Write Section Data
-    bs.writeInt(1413694803) #Magic
+    bs.writeString("SECT", False)	# cdcEngineTools section magic
     bs.writeInt(size)
     bs.writeInt(0)
-    bs.writeByte(0)
-    bs.writeByte(31 + len(mdl.meshes)) # numRelocations
-    bs.writeByte(0)
-    bs.writeByte(0)
+    bs.writeInt(31 + len(mdl.meshes) << 8) # numRelocations
     bs.writeInt(0)
     bs.writeUInt(4294967295)
     #Write relocations
-    bs.writeShort(40)
-    bs.writeShort(0)
+    bs.writeInt(id << 3)
     bs.writeUInt(boneOffset)
-    bs.writeShort(40)
-    bs.writeShort(0)
+    bs.writeInt(id << 3)
     bs.writeUInt(vertexOffset)
-    bs.writeShort(40)
-    bs.writeShort(0)
+    bs.writeInt(id << 3)
     bs.writeUInt(faceOffset)
-    bs.writeShort(40)
-    bs.writeShort(0)
+    bs.writeInt(id << 3)
     bs.writeUInt(envMappedVertices)
-    bs.writeShort(40)
-    bs.writeShort(0)
+    bs.writeInt(id << 3)
     bs.writeUInt(EyeRefEnvMappedVertices)
-    bs.writeShort(40)
-    bs.writeShort(0)
+    bs.writeInt(id << 3)
     bs.writeUInt(boneMirrorData)
-    bs.writeShort(40)
-    bs.writeShort(0)
+    bs.writeInt(id << 3)
     bs.writeUInt(drawgroupCenter)
     z.seek(120, NOESEEK_ABS) 
     bs.writeBytes(z.readBytes(88))
-    bs.writeShort(40)
-    bs.writeShort(0)
+    bs.writeInt(id << 3)
     bs.writeUInt(offset1 + 8)
-    bs.writeShort(40)
-    bs.writeShort(0)
+    bs.writeInt(id << 3)
     bs.writeUInt(offset2 + 24)
-    bs.writeShort(40)
-    bs.writeShort(0)
+    bs.writeInt(id << 3)
     bs.writeUInt(offset3 + 24)
-    bs.writeShort(40)
-    bs.writeShort(0)
+    bs.writeInt(id << 3)
     bs.writeUInt(offset4 + 24)
-    bs.writeShort(40)
-    bs.writeShort(0)
+    bs.writeInt(id << 3)
     bs.writeUInt(offset5 + 28 - 4)
-    bs.writeShort(40)
-    bs.writeShort(0)
+    bs.writeInt(id << 3)
     bs.writeUInt(offset6 + 40 - 16)
-    bs.writeShort(40)
-    bs.writeShort(0)
+    bs.writeInt(id << 3)
     bs.writeUInt(offset7 + 24)
-    bs.writeShort(40)
-    bs.writeShort(0)
+    bs.writeInt(id << 3)
     bs.writeUInt(offset8 + 48 - 24)
-    bs.writeShort(40)
-    bs.writeShort(0)
+    bs.writeInt(id << 3)
     bs.writeUInt(offset9 + 24)
-    bs.writeShort(40)
-    bs.writeShort(0)
+    bs.writeInt(id << 3)
     bs.writeUInt(offset10 - 8 + 32)
-    bs.writeShort(40)
-    bs.writeShort(0)
+    bs.writeInt(id << 3)
     bs.writeUInt(offset11 - 24 + 48)
-    bs.writeShort(40)
-    bs.writeShort(0)
+    bs.writeInt(id << 3)
     bs.writeUInt(offset12 - 24 + 48)
-    bs.writeShort(40)
-    bs.writeShort(0)
+    bs.writeInt(id << 3)
     bs.writeUInt(offset13 - 16)
 
     for m, mesh in enumerate(mdl.meshes):
 
-        bs.writeShort(40)
-        bs.writeShort(0)
+        bs.writeInt(id << 3)
         bs.writeUInt(offsetlist[m])
 
     bs.writeBytes(sd.getBuffer())
+
+    #Fix section reference of written HInfo relocations
+
+    bs.seek(80)
+    bs.writeInt(id << 3)
+    bs.seek(4, NOESEEK_REL)
+    bs.writeInt(id << 3)
+    bs.seek(4, NOESEEK_REL)
+    bs.writeInt(id << 3)
+    bs.seek(4, NOESEEK_REL)
+    bs.writeInt(id << 3)
+    bs.seek(4, NOESEEK_REL)
+    bs.writeInt(id << 3)
+    bs.seek(4, NOESEEK_REL)
+    bs.writeInt(id << 3)
+    bs.seek(4, NOESEEK_REL)
+    bs.writeInt(id << 3)
+    bs.seek(4, NOESEEK_REL)
+    bs.writeInt(id << 3)
+    bs.seek(4, NOESEEK_REL)
+    bs.writeInt(id << 3)
+    bs.seek(4, NOESEEK_REL)
+    bs.writeInt(id << 3)
+    bs.seek(4, NOESEEK_REL)
+    bs.writeInt(id << 3)
 
     return 1
