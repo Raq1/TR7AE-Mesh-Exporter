@@ -12,16 +12,16 @@ The exporter allows you to export custom models to Tomb Raider Legend and Annive
 ## Q&A
 
 * Is it possible to replace any model? Not just player Lara?
-* The plugin only supports exporting to Anniversary Lara for now. But it is possible to replace any other model with your exported file, with a little bit of hex editing. I explain that at the end of the TR7AE Modding Tutorial.
+ The plugin only supports exporting to Anniversary Lara for now. But it is possible to replace any other model with your exported file, with a little bit of hex editing. I explain that at the end of the TR7AE Modding Tutorial.
 
 * Is it possible to edit level geometry/collision with this?
-* No, level geometry and collision use a different format which the plugin doesn't support as of now. TheIndra is currently working on an experimental level editor, which won't be available anytime soon.
+ No, level geometry and collision use a different format which the plugin doesn't support as of now. TheIndra is currently working on an experimental level editor, which won't be available anytime soon.
 
 * Does the exporter work with Legend Next Gen models?
-* No, Legend Next Gen models use a different mesh format which is currently not entirely understood. Maybe I'll consider researching it further in the future, but certainly not now.
+ No, Legend Next Gen models use a different mesh format which is currently not entirely understood. Maybe I'll consider researching it further in the future, but certainly not now.
 
 * What is the vertex/polygon limit of the format?
-* The model you want to port to the game must not exceed 21850 vertices, and each individual mesh must not exceed 10922 polygons.
+ The model you want to port to the game must not exceed 21850 vertices, and each individual mesh must not exceed 10922 polygons.
 
 ## Thanks to
 * [TheIndra55](https://github.com/TheIndra55) for his amazing [Menu Hook](https://github.com/TheIndra55/TRAE-menu-hook) which made debugging extremely faster and easier
